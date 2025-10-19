@@ -1,11 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:help.getzep.com)",
-      "WebSearch",
-      "Bash(source:*)",
-      "Bash(python3:*)",
-      "Bash(pip install:*)"
+      "Bash(cat ~/.local/lib/python3.10/site-packages/graphiti_core/llm_client/openai_client.py)",
+      "Bash(cat ~/.local/lib/python3.10/site-packages/graphiti_core/embedder/openai.py)"
     ],
     "deny": [],
     "ask": []

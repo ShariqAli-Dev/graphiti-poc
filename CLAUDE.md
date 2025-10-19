@@ -94,11 +94,34 @@ Every uploaded file creates a two-tier episode hierarchy:
 
 ### File Tracking System
 
-Files are tracked using the `group_id` parameter:
-- **file_id format**: `"classification/filename"` (e.g., `"TC103/Q3_Report.pdf"`)
-- **With version**: `"TC103/Q3_Report.pdf@Q3_2024"`
-- All episodes for a file share the same `group_id`
-- Enables filtering by file in searches and retrievals
+**Client-Level Entity Linking (Multi-Tenant Architecture)**:
+- Uses **client_id** as `group_id` for entity namespace isolation
+- All files for a client share the same `group_id` → entities automatically link across documents
+- Different clients have different `group_id` → complete isolation
+- Example: `/inputs/` directory → all files get `group_id: "client-inputs"`
+
+**Individual File Tracking**:
+- **file_id** stored in episode metadata for individual file management
+- Format: `"classification-filename"` (e.g., `"TC103-Q3_Report_pdf"`)
+- With version: `"TC103-Q3_Report_pdf-v-Q3_2024"`
+- Used for file deletion, listing, and detail queries
+
+**How It Works**:
+```python
+# Three founder contract PDFs in /inputs/founders contracts/:
+# - Shariq_Ali_FOUNDER_AGREEMENTS.pdf
+# - Eliot_Puplett_FOUNDER_AGREEMENTS.pdf
+# - Aamina_Bawany_FOUNDER_AGREEMENTS.pdf
+
+# All get: group_id = "client-inputs"
+# Individual file_ids in metadata:
+#   - "TC103-Shariq_Ali_FOUNDER_AGREEMENTS_pdf"
+#   - "TC103-Eliot_Puplett_FOUNDER_AGREEMENTS_pdf"
+#   - "TC103-Aamina_Bawany_FOUNDER_AGREEMENTS_pdf"
+
+# Result: Graphiti's LLM automatically merges duplicate entities
+# "CompanyX" mentioned in all 3 files → single entity node
+```
 
 ### Search Methods
 
@@ -120,25 +143,28 @@ Files are tracked using the `group_id` parameter:
 - Includes node name, summary, labels, and attributes
 - Best for finding entities rather than facts
 
-### File Upload Process (episode_manager.py:89-177)
+### File Upload Process (episode_manager.py:218-380)
 
 1. Parse file using appropriate parser
 2. Extract TC### classification from file path
-3. Create file_id: `"{classification}/{filename}"`
-4. Create parent episode with file metadata
-5. Detect sections or chunk content based on size/structure:
+3. Create **file_id** for tracking: `"{classification}-{filename}"` (sanitized)
+4. Extract **client_id** from base directory for `group_id` namespace
+5. Create parent episode with file metadata (includes file_id)
+6. Detect sections or chunk content based on size/structure:
    - Sections detected → One episode per section
    - <5000 tokens, no sections → Single content episode
    - >5000 tokens, no sections → Semantic chunking
-6. Create section episodes linked to parent
-7. Return upload results with all UUIDs
+7. Create section episodes linked to parent
+8. All episodes use **client_id as group_id** for entity linking
+9. Return upload results with file_id, client_id, and UUIDs
 
-### File Deletion (episode_manager.py:179-208)
+### File Deletion (episode_manager.py:387-440)
 
-1. Retrieve all episodes with matching `group_id`
-2. Delete each episode using `remove_episode(uuid)`
-3. Entities remain in graph (may be referenced by other files)
-4. Use "Cleanup Orphaned Entities" command to remove unreferenced entities
+1. Retrieve all episodes (cannot filter by group_id since shared across files)
+2. Filter episodes by **file_id** in metadata
+3. Delete each matching episode using `remove_episode(uuid)`
+4. Entities remain in graph (may be referenced by other files)
+5. Use "Cleanup Orphaned Entities" command to remove unreferenced entities
 
 ### Database Operations
 
@@ -166,10 +192,21 @@ Files are tracked using the `group_id` parameter:
 - Falls back to "UNCLASSIFIED" if no match found
 - Used for organizing and filtering files
 
+### Client ID Extraction (episode_manager.py:83-135)
+- Automatically extracts client_id from file path for multi-tenant isolation
+- Skips common system/project directories: `/home`, `/usr`, `/projects`, `/sandbox`, `/graphiti`
+- Uses first meaningful directory as client identifier
+- Examples:
+  - `/home/user/projects/graphiti/inputs/file.pdf` → `"client-inputs"`
+  - `/data/client-abc/documents/file.pdf` → `"client-client-abc"`
+- Sanitized to meet Graphiti's group_id requirements (alphanumeric, dashes, underscores only)
+
 ### Metadata Storage
-- Parent metadata: JSON in `source_description` field
-- Section metadata: Links to parent via `parent_episode_uuid`
+- Parent metadata: JSON in `source_description` field (includes `file_id`, `classification`, `filename`, etc.)
+- Section metadata: Links to parent via `parent_episode_uuid` and stores `parent_file` (file_id)
 - Episode type tracked via `episode_type` field: "parent" or "section"
+- **file_id** used for individual file operations (deletion, details)
+- **group_id** (client_id) used for entity linking across files
 
 ### Token Limits
 - Uses tiktoken with cl100k_base encoding (GPT-4)
