@@ -38,7 +38,13 @@ class GraphitiDependencies:
 def get_model():
     """Configure and return the LLM model to use."""
     model_choice = os.getenv('MODEL_CHOICE', 'gpt-4o-mini')
-    api_key = os.getenv('OPENAI_API_KEY', 'no-api-key-provided')
+    api_key = os.getenv('OPENAI_API_KEY')
+
+    if not api_key:
+        raise ValueError(
+            'OPENAI_API_KEY must be set in .env file. '
+            'Please add your OpenAI API key to the .env file.'
+        )
 
     return OpenAIModel(model_choice, provider=OpenAIProvider(api_key=api_key))
 
@@ -109,30 +115,30 @@ async def search_graphiti(ctx: RunContext[GraphitiDependencies], query: str) -> 
         raise
 
 
-# ========== Main Interactive Agent Function ==========
-async def run_interactive_agent(graphiti_client: Graphiti):
+# ========== Shared Agent Loop Function ==========
+async def _agent_loop(graphiti_client: Graphiti, console: Console, exit_commands: list[str], return_message: str):
     """
-    Run the Graphiti agent in interactive mode.
+    Shared agent interaction loop for both CLI and standalone modes.
 
     Args:
         graphiti_client: Initialized Graphiti client
-    """
-    print("\n" + "="*80)
-    print("GRAPHITI AI AGENT - Natural Language Q&A")
-    print("="*80)
-    print("\nAsk questions about your documents. Type 'exit' to return to main menu.\n")
+        console: Rich console for rendering
+        exit_commands: List of commands that exit the loop
+        return_message: Message to display when exiting
 
-    console = Console()
+    Returns:
+        List of messages from the conversation
+    """
     messages = []
 
     try:
         while True:
             # Get user input
-            user_input = input("[You] ")
+            user_input = input("\n[You] ")
 
             # Check if user wants to exit
-            if user_input.lower() in ['exit', 'quit', 'back', 'bye']:
-                print("Returning to main menu...")
+            if user_input.lower() in exit_commands:
+                print(return_message)
                 break
 
             if not user_input.strip():
@@ -156,20 +162,42 @@ async def run_interactive_agent(graphiti_client: Graphiti):
                         # Add the new messages to the chat history
                         messages.extend(result.all_messages())
 
-                print()  # New line after response
-
             except Exception as e:
-                print(f"\n[Error] An error occurred: {str(e)}\n")
+                print(f"\n[Error] An error occurred: {str(e)}")
 
     except KeyboardInterrupt:
-        print("\nAgent interrupted. Returning to main menu...")
+        print(f"\n{return_message}")
+
+    return messages
+
+
+# ========== Main Interactive Agent Function ==========
+async def run_interactive_agent(graphiti_client: Graphiti):
+    """
+    Run the Graphiti agent in interactive mode.
+
+    Args:
+        graphiti_client: Initialized Graphiti client
+    """
+    print("\n" + "="*80)
+    print("GRAPHITI AI AGENT - Natural Language Q&A")
+    print("="*80)
+    print("\nAsk questions about your documents. Type 'exit' to return to main menu.\n")
+
+    console = Console()
+    await _agent_loop(
+        graphiti_client,
+        console,
+        exit_commands=['exit', 'quit', 'back', 'bye'],
+        return_message="Returning to main menu..."
+    )
 
 
 # ========== Standalone Mode ==========
 async def main():
     """Run the agent as a standalone program."""
     print("Graphiti Agent - Powered by Pydantic AI")
-    print("Enter 'exit' to quit the program.")
+    print("Enter 'exit' to quit the program.\n")
 
     # Neo4j connection parameters
     neo4j_uri = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')
@@ -182,43 +210,20 @@ async def main():
     # Initialize the graph database with graphiti's indices if needed
     try:
         await graphiti_client.build_indices_and_constraints()
-        print("Graphiti indices ready.")
+        print("Graphiti indices ready.\n")
     except Exception as e:
-        print(f"Note: {str(e)}")
+        print(f"Note: {str(e)}\n")
 
     console = Console()
-    messages = []
 
     try:
-        while True:
-            # Get user input
-            user_input = input("\n[You] ")
-
-            # Check if user wants to exit
-            if user_input.lower() in ['exit', 'quit', 'bye', 'goodbye']:
-                print("Goodbye!")
-                break
-
-            try:
-                # Process the user input and output the response
-                print("\n[Assistant]")
-                with Live('', console=console, vertical_overflow='visible') as live:
-                    # Pass the Graphiti client as a dependency
-                    deps = GraphitiDependencies(graphiti_client=graphiti_client)
-
-                    async with graphiti_agent.run_stream(
-                        user_input, message_history=messages, deps=deps
-                    ) as result:
-                        curr_message = ""
-                        async for message in result.stream_text(delta=True):
-                            curr_message += message
-                            live.update(Markdown(curr_message))
-
-                        # Add the new messages to the chat history
-                        messages.extend(result.all_messages())
-
-            except Exception as e:
-                print(f"\n[Error] An error occurred: {str(e)}")
+        # Use shared agent loop
+        await _agent_loop(
+            graphiti_client,
+            console,
+            exit_commands=['exit', 'quit', 'bye', 'goodbye'],
+            return_message="Goodbye!"
+        )
     finally:
         # Close the Graphiti connection when done
         await graphiti_client.close()

@@ -21,8 +21,72 @@ from graphiti_core.nodes import EpisodeType
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data
 
 from file_parsers import parse_file
+from entity_types import entity_types
 
 logger = logging.getLogger(__name__)
+
+
+def extract_metadata_from_path(file_path: str) -> Dict[str, Optional[str]]:
+    """
+    Extract client and classification metadata from file path.
+
+    Expected structure: .../client_name/classification_folder/document.ext
+    Example: inputs/tener/TC103/Q1_2024_Report.txt
+
+    Args:
+        file_path: Path to the file
+
+    Returns:
+        Dictionary with 'client' and 'classification' keys
+        Returns None for missing values
+
+    Note: This is a best-effort extraction. For ambiguous paths, you may need
+    to manually specify client/classification metadata.
+    """
+    path = Path(file_path).resolve()
+    parts = path.parts
+
+    # Try to find the pattern: client/classification/file
+    # Start from the end and work backwards
+    if len(parts) >= 3:
+        # parts[-1] is the filename
+        # parts[-2] should be classification folder (e.g., TC103)
+        # parts[-3] should be client folder (e.g., tener)
+        classification = parts[-2]
+        client = parts[-3]
+
+        # Skip system/common directories that are unlikely to be client names
+        # This prevents extracting "/home/user/projects" as client names
+        skip_dirs = {'home', 'usr', 'var', 'tmp', 'etc', 'opt', 'bin', 'lib'}
+
+        # Also skip common project structure directories
+        # Note: If your client is actually named "projects" or "sandbox",
+        # you'll need to adjust this logic or use a deeper directory structure
+        skip_project_dirs = {'projects', 'sandbox', 'graphiti'}
+
+        # Only skip if BOTH client and classification are in skip lists
+        # This allows "inputs/TC103/file.pdf" to still extract TC103 as classification
+        client_is_system = client.lower() in skip_dirs or client.lower() in skip_project_dirs
+        classification_is_system = classification.lower() in skip_dirs
+
+        # If client looks like a system directory, try going one level deeper
+        if client_is_system and len(parts) >= 4:
+            classification = parts[-2]
+            client = parts[-4]  # Skip one level
+            client_is_system = client.lower() in skip_dirs or client.lower() in skip_project_dirs
+
+        # Only return if we found something that doesn't look like a system path
+        if not (client_is_system and classification_is_system):
+            return {
+                'client': client if not client_is_system else None,
+                'classification': classification if not classification_is_system else None
+            }
+
+    # Fallback: couldn't extract meaningful metadata
+    return {
+        'client': None,
+        'classification': None
+    }
 
 
 class GraphitiManager:
@@ -46,7 +110,7 @@ class GraphitiManager:
             show_progress: Whether to print progress messages
 
         Returns:
-            Dict with upload results including episode UUID
+            Dict with upload results including episode UUID, client, and classification
         """
         try:
             # Parse the file
@@ -57,9 +121,28 @@ class GraphitiManager:
             parsed = parse_file(file_path)
             word_count = len(parsed['content'].split())
 
-            logger.info(f"Uploading file: {filename} ({word_count} words)")
+            # Extract metadata from path (client + classification)
+            metadata = extract_metadata_from_path(file_path)
+            client = metadata['client']
+            classification = metadata['classification']
+
+            # Build source description with classification context
+            if classification:
+                source_desc = f"Classification: {classification} | Document: {filename}"
+            else:
+                source_desc = f"Document: {filename}"
+
+            # Use client as group_id for multi-tenant isolation
+            group_id = client if client else ""
+
+            logger.info(
+                f"Uploading file: {filename} ({word_count} words) "
+                f"[Client: {client or 'N/A'}, Classification: {classification or 'N/A'}]"
+            )
 
             if show_progress:
+                if client and classification:
+                    print(f"  Client: {client}, Classification: {classification}")
                 print(f"  Extracting entities from {word_count} words...")
 
             # Create ONE episode for the entire file
@@ -67,8 +150,10 @@ class GraphitiManager:
                 name=filename,
                 episode_body=parsed['content'],
                 source=EpisodeType.text,
-                source_description=f"Document: {filename}",
+                source_description=source_desc,
                 reference_time=datetime.now(timezone.utc),
+                group_id=group_id,
+                entity_types=entity_types,
             )
 
             logger.info(f"File uploaded successfully. Episode UUID: {result.episode.uuid}")
@@ -81,6 +166,8 @@ class GraphitiManager:
                 'filename': filename,
                 'episode_uuid': result.episode.uuid,
                 'word_count': word_count,
+                'client': client,
+                'classification': classification,
             }
 
         except Exception as e:
@@ -185,6 +272,73 @@ class GraphitiManager:
         )
 
         return episodes
+
+    async def deduplicate_entities(self, show_progress: bool = True) -> Dict:
+        """
+        Find and report duplicate entity nodes in the graph.
+
+        This uses Graphiti's LLM-based deduplication to identify entities
+        that refer to the same real-world object (e.g., "SHARIQ ALI" and "shariq").
+
+        Args:
+            show_progress: Whether to print progress messages
+
+        Returns:
+            Dict with deduplication results including duplicate groups found
+        """
+        try:
+            if show_progress:
+                print("Retrieving all entity nodes from the graph...")
+
+            # Query all entity nodes using Neo4j directly
+            async with self.graphiti.driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (n:Entity)
+                    RETURN n.uuid AS uuid, n.name AS name,
+                           n.summary AS summary, labels(n) AS labels
+                    """
+                )
+                records = await result.data()
+
+            if not records:
+                if show_progress:
+                    print("No entity nodes found in the graph.")
+                return {'duplicate_groups': [], 'total_entities': 0}
+
+            total_entities = len(records)
+            if show_progress:
+                print(f"Found {total_entities} entities. Analyzing for duplicates...")
+
+            # Group by name (case-insensitive) to find potential duplicates
+            name_groups = {}
+            for record in records:
+                name_lower = record['name'].lower()
+                if name_lower not in name_groups:
+                    name_groups[name_lower] = []
+                name_groups[name_lower].append(record)
+
+            # Find groups with multiple entities (potential duplicates)
+            duplicate_groups = [
+                group for group in name_groups.values() if len(group) > 1
+            ]
+
+            if show_progress:
+                print(f"\nFound {len(duplicate_groups)} potential duplicate groups:")
+                for idx, group in enumerate(duplicate_groups, 1):
+                    print(f"\nGroup {idx}:")
+                    for entity in group:
+                        print(f"  - {entity['name']} (UUID: {entity['uuid'][:8]}...)")
+
+            return {
+                'duplicate_groups': duplicate_groups,
+                'total_entities': total_entities,
+                'total_duplicate_groups': len(duplicate_groups),
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to deduplicate entities: {e}")
+            raise
 
     def display_search_results(self, results: List):
         """

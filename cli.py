@@ -9,7 +9,6 @@ import asyncio
 import logging
 import os
 import readline
-import glob
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -91,12 +90,15 @@ class GraphitiCLI:
     def __init__(self):
         """Initialize the CLI."""
         # Neo4j connection parameters
-        self.neo4j_uri = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')
-        self.neo4j_user = os.environ.get('NEO4J_USER', 'neo4j')
-        self.neo4j_password = os.environ.get('NEO4J_PASSWORD', 'password')
+        self.neo4j_uri = os.environ.get('NEO4J_URI', '')
+        self.neo4j_user = os.environ.get('NEO4J_USER', '')
+        self.neo4j_password = os.environ.get('NEO4J_PASSWORD', '')
 
         if not self.neo4j_uri or not self.neo4j_user or not self.neo4j_password:
-            raise ValueError('NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD must be set in .env')
+            raise ValueError(
+                'NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD must be set in .env file. '
+                'Please check your .env configuration.'
+            )
 
         self.graphiti = None
         self.manager = None
@@ -132,8 +134,9 @@ class GraphitiCLI:
         print("3. Search Graph (Raw Facts)")
         print("4. Ask Question (AI Agent)")
         print("5. List All Episodes")
-        print("6. Reset Database")
-        print("7. Exit")
+        print("6. Deduplicate Entities")
+        print("7. Reset Database")
+        print("8. Exit")
         print("\n" + "="*80)
 
     async def upload_file(self):
@@ -158,6 +161,10 @@ class GraphitiCLI:
 
             print(f"\n✓ File uploaded successfully!")
             print(f"  Filename: {result['filename']}")
+            if result.get('client'):
+                print(f"  Client: {result['client']}")
+            if result.get('classification'):
+                print(f"  Classification: {result['classification']}")
             print(f"  Episode UUID: {result['episode_uuid']}")
             print(f"  Word Count: {result['word_count']}")
 
@@ -207,7 +214,10 @@ class GraphitiCLI:
             if successes:
                 print("\nSuccessful uploads:")
                 for r in successes:
-                    print(f"  - {r['filename']} ({r['word_count']} words)")
+                    client_info = f"[{r['client']}]" if r.get('client') else ""
+                    classification_info = f" {r['classification']}" if r.get('classification') else ""
+                    metadata_str = f"{client_info}{classification_info} " if (client_info or classification_info) else ""
+                    print(f"  - {metadata_str}{r['filename']} ({r['word_count']} words)")
 
             if failures:
                 print("\nFailed uploads:")
@@ -283,6 +293,34 @@ class GraphitiCLI:
 
         input("\nPress Enter to continue...")
 
+    async def deduplicate_entities(self):
+        """Find and display duplicate entities."""
+        print("\n" + "-"*80)
+        print("DEDUPLICATE ENTITIES")
+        print("-"*80)
+        print("\nThis will scan the graph for duplicate entities")
+        print("(e.g., 'SHARIQ ALI' and 'shariq' referring to the same person)")
+
+        try:
+            result = await self.manager.deduplicate_entities(show_progress=True)
+
+            if result['total_duplicate_groups'] == 0:
+                print("\n✓ No duplicates found! All entities have unique names.")
+            else:
+                print(f"\n{'='*80}")
+                print(f"Found {result['total_duplicate_groups']} duplicate groups")
+                print(f"Total entities: {result['total_entities']}")
+                print(f"{'='*80}")
+                print("\nNote: These are entities with similar names (case-insensitive).")
+                print("To merge these duplicates, you can:")
+                print("  1. Re-upload documents (with entity types, duplicates should merge)")
+                print("  2. Use Neo4j Browser to manually merge nodes")
+
+        except Exception as e:
+            print(f"\n✗ Deduplication failed: {e}")
+
+        input("\nPress Enter to continue...")
+
     async def reset_database(self):
         """Reset the database."""
         print("\n" + "-"*80)
@@ -321,7 +359,7 @@ class GraphitiCLI:
             # Main loop
             while True:
                 self.display_menu()
-                choice = input("Select an option (1-7): ").strip()
+                choice = input("Select an option (1-8): ").strip()
 
                 if choice == '1':
                     await self.upload_file()
@@ -334,12 +372,14 @@ class GraphitiCLI:
                 elif choice == '5':
                     await self.list_episodes()
                 elif choice == '6':
-                    await self.reset_database()
+                    await self.deduplicate_entities()
                 elif choice == '7':
+                    await self.reset_database()
+                elif choice == '8':
                     print("\nGoodbye!")
                     break
                 else:
-                    print("\nInvalid selection. Please choose 1-7.")
+                    print("\nInvalid selection. Please choose 1-8.")
 
         except KeyboardInterrupt:
             print("\n\nProgram interrupted by user")

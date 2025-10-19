@@ -2,7 +2,24 @@
   "permissions": {
     "allow": [
       "Bash(cat ~/.local/lib/python3.10/site-packages/graphiti_core/llm_client/openai_client.py)",
-      "Bash(cat ~/.local/lib/python3.10/site-packages/graphiti_core/embedder/openai.py)"
+      "Bash(cat ~/.local/lib/python3.10/site-packages/graphiti_core/embedder/openai.py)",
+      "Bash(python3 -c \"from graphiti_core import Graphiti; import inspect; print(inspect.signature(Graphiti.add_episode))\")",
+      "Bash(python3 -c \"from graphiti_core.nodes import EpisodicNode; import inspect; print(inspect.signature(EpisodicNode.__init__))\")",
+      "WebFetch(domain:help.getzep.com)",
+      "Bash(python3 test_path_parsing.py)",
+      "Bash(python3 test_episode_metadata.py)",
+      "Bash(python3 test_upload_scenarios.py)",
+      "Bash(python3 -c \"from graphiti_core.llm_client.openai_client import OpenAIClient; import inspect; print(inspect.getsourcefile(OpenAIClient))\")",
+      "Read(//home/shariq/.local/lib/python3.10/site-packages/graphiti_core/**)",
+      "Bash(cat ~/.local/lib/python3.10/site-packages/graphiti_core/prompts/extract_edges.py)",
+      "Bash(cat ~/.local/lib/python3.10/site-packages/graphiti_core/prompts/extract_nodes.py)",
+      "Bash(cat ~/.local/lib/python3.10/site-packages/graphiti_core/prompts/dedupe_nodes.py)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(python3 -c \"\nfrom file_parsers import parse_pdf\nresult = parse_pdf(''/home/shariq/projects/sandbox/graphiti/inputs/medici/founders-contracts/Shariq Ali FOUNDER AGREEMENTS (01 Oct 2025).pdf'')\nprint(result[:3000])\n\")",
+      "Bash(python3 -c \"\nfrom file_parsers import parse_pdf\nresult = parse_pdf(''/home/shariq/projects/sandbox/graphiti/inputs/medici/founders-contracts/Aamina_Bawany_FOUNDER AGREEMENTS (01 Oct 2025).pdf'')\nprint(result[:3000])\n\")",
+      "Bash(python3 -c \"\nfrom file_parsers import parse_pdf\nresult = parse_pdf(''/home/shariq/projects/sandbox/graphiti/inputs/medici/founders-contracts/Eliot Puplett FOUNDER AGREEMENTS (01 Oct 2025).pdf'')\nprint(result[2000:5000])\n\")",
+      "Bash(python3 -c \"\nfrom file_parsers import parse_pdf\nresult = parse_pdf(''/home/shariq/projects/sandbox/graphiti/inputs/medici/founders-contracts/Eliot Puplett FOUNDER AGREEMENTS (01 Oct 2025).pdf'')\nprint(result[:2000])\n\")"
     ],
     "deny": [],
     "ask": []
